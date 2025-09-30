@@ -1,5 +1,7 @@
 import asyncio
 import os
+from typing import List
+
 import numpy as np
 import sounddevice as sd
 import logging
@@ -9,6 +11,7 @@ import base64
 import scipy.signal
 
 from livekit import rtc, api
+from livekit.api import LiveKitAPI
 from livekit.plugins import noise_cancellation
 from dotenv import load_dotenv
 
@@ -23,7 +26,7 @@ BLOCKSIZE = 480  # 10ms chunks at 48kHz
 CHANNELS = 1
 
 # Voice agent settings
-VOICE_AGENT_URL = "wss://xxxxxxxxxxxxxxx"
+VOICE_AGENT_URL = "ws://localhost:8001/api/v2/ws/Minh"
 VOICE_AGENT_INPUT_RATE = 16000  # 16kHz for sending to voice agent
 VOICE_AGENT_OUTPUT_RATE = 24000  # 24kHz for receiving from voice agent
 
@@ -104,12 +107,39 @@ class VoiceAgentClient:
                 "type": "audio",
                 "data": audio_b64
             }
-            
+
             await self.websocket.send(json.dumps(message))
             logger.debug(f"🤖 📤 Sent {len(resampled)} samples to voice agent")
             
         except Exception as e:
             logger.error(f"🤖 ❌ Error sending audio: {e}")
+
+    async def _process_chat_message(self, reader: rtc.TextStreamReader, participant_identity: str):
+        """Process incoming chat messages"""
+        try:
+            full_message = await reader.read_all()
+            logger.info(f"[CHAT] {participant_identity}: {full_message}")
+
+            # Echo the message back to demonstrate bidirectional communication
+            message = {
+                "type": "text",
+                "data": full_message
+            }
+
+            return json.dumps(message)
+        except Exception as e:
+            logger.error(f"Error processing chat message: {e}")
+
+    def text_listener(self):
+        def _handle_chat_stream(reader: rtc.TextStreamReader, participant_identity: str):
+            async def process_and_send():
+                result = await self._process_chat_message(reader, participant_identity)
+                await self.websocket.send(result)
+
+            asyncio.create_task(process_and_send())
+
+        return _handle_chat_stream
+
     
     async def listen_for_responses(self):
         """Listen for audio responses from voice agent"""
@@ -135,6 +165,8 @@ class VoiceAgentClient:
                         logger.debug(f"🤖 📥 Received {len(resampled)} samples from voice agent")
                     except asyncio.QueueFull:
                         logger.warning("🤖 ⚠️ Output queue full, dropping audio")
+                if data.get("type") == "text":
+                    print(data.get("data", ""))
                         
         except websockets.exceptions.ConnectionClosed:
             logger.info("🤖 Voice agent connection closed")
@@ -289,9 +321,9 @@ async def rtc_session(room, queue: asyncio.Queue, voice_agent: VoiceAgentClient)
                 logger.info(f"Still waiting for audio track... ({track_wait_time}s)")
             await asyncio.sleep(2)
             
-            if track_wait_time > 60:  # Wait max 60 seconds for audio track
-                logger.error("No audio track found after 60 seconds")
-                return
+            # if track_wait_time > 60:  # Wait max 60 seconds for audio track
+            #     logger.error("No audio track found after 60 seconds")
+            #     return
 
     logger.info("🎵 Creating audio stream...")
     try:
@@ -335,6 +367,7 @@ async def rtc_session(room, queue: asyncio.Queue, voice_agent: VoiceAgentClient)
 
 async def main():
     logger.info("🎧 Starting LiveKit Voice Agent Integration...")
+    active_tasks: List[asyncio.Task] = []
     
     # Check audio devices
     logger.info("Available audio devices:")
@@ -365,7 +398,7 @@ async def main():
         .with_grants(
             api.VideoGrants(
                 room_join=True,
-                room="my-room",
+                room="truongnn-room",
                 agent=True,
             )
         )
@@ -395,6 +428,42 @@ async def main():
     def on_track_unsubscribed(track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
         logger.info(f"❌ Track unsubscribed: {publication.sid} from {participant.identity}")
 
+    # async def send_echo_message(original_sender: str, message: str):
+    #     """Echo a message back to the sender"""
+    #     try:
+    #         text_writer = await room.local_participant.stream_text(
+    #             destination_identities=[original_sender],
+    #             topic="chat"
+    #         )
+    #
+    #         echo_msg = f"Echo: {message}"
+    #         await text_writer.write(echo_msg)
+    #         await text_writer.aclose()
+    #
+    #     except Exception as e:
+    #         logger.error(f"Error sending echo message: {e}")
+
+    async def _process_chat_message(reader: rtc.TextStreamReader, participant_identity: str):
+        """Process incoming chat messages"""
+        try:
+            full_message = await reader.read_all()
+            logger.info(f"[CHAT] {participant_identity}: {full_message}")
+
+            # Echo the message back to demonstrate bidirectional communication
+            message = {
+                "type": "text",
+                "data": full_message
+            }
+
+            return message
+        except Exception as e:
+            logger.error(f"Error processing chat message: {e}")
+
+    # def _handle_chat_stream(reader: rtc.TextStreamReader, participant_identity: str):
+    #     """Handle incoming chat messages"""
+    #     task = asyncio.create_task(_process_chat_message(reader, participant_identity))
+    #     active_tasks.append(task)
+    #     task.add_done_callback(lambda _: active_tasks.remove(task))
     # Initialize voice agent
     voice_agent = VoiceAgentClient(VOICE_AGENT_URL, voice_agent_queue)
     
@@ -419,6 +488,8 @@ async def main():
             
             # Start audio publisher for voice agent responses
             voice_agent_publisher = asyncio.create_task(audio_publisher(room, voice_agent_queue))
+
+            room.register_text_stream_handler("chat", voice_agent.text_listener())
             
             # Start RTC session with voice agent integration
             await rtc_session(room, local_audio_queue, voice_agent)

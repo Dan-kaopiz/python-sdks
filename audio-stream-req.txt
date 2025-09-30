@@ -1,0 +1,7 @@
+numpy
+sounddevice
+websockets
+scipy
+livekit
+livekit-api
+python-dotenv
