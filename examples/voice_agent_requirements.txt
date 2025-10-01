@@ -3,3 +3,6 @@ scipy
 sounddevice
 numpy
 python-dotenv
+livekit
+livekit-api
+livekit-plugins-noise-cancellation

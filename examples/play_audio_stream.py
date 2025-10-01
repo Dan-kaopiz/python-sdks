@@ -26,7 +26,7 @@ BLOCKSIZE = 480  # 10ms chunks at 48kHz
 CHANNELS = 1
 
 # Voice agent settings
-VOICE_AGENT_URL = "ws://localhost:8001/api/v2/ws/Minh"
+VOICE_AGENT_URL = "ws://localhost:8000/api/v2/ws/Minh"
 VOICE_AGENT_INPUT_RATE = 16000  # 16kHz for sending to voice agent
 VOICE_AGENT_OUTPUT_RATE = 24000  # 24kHz for receiving from voice agent
 
